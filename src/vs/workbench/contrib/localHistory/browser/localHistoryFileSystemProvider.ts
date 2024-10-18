@@ -3,12 +3,12 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Event } from 'vs/base/common/event';
-import { Disposable, IDisposable } from 'vs/base/common/lifecycle';
-import { URI } from 'vs/base/common/uri';
-import { FileDeleteOptions, FileOverwriteOptions, FileSystemProviderCapabilities, FileType, FileWriteOptions, hasReadWriteCapability, IFileService, IFileSystemProvider, IFileSystemProviderWithFileReadWriteCapability, IStat, IWatchOptions } from 'vs/platform/files/common/files';
-import { isEqual } from 'vs/base/common/resources';
-import { VSBuffer } from 'vs/base/common/buffer';
+import { Event } from '../../../../base/common/event.js';
+import { Disposable, IDisposable } from '../../../../base/common/lifecycle.js';
+import { URI } from '../../../../base/common/uri.js';
+import { IFileDeleteOptions, IFileOverwriteOptions, FileSystemProviderCapabilities, FileType, IFileWriteOptions, hasReadWriteCapability, IFileService, IFileSystemProvider, IFileSystemProviderWithFileReadWriteCapability, IStat, IWatchOptions } from '../../../../platform/files/common/files.js';
+import { isEqual } from '../../../../base/common/resources.js';
+import { VSBuffer } from '../../../../base/common/buffer.js';
 
 interface ILocalHistoryResource {
 
@@ -145,13 +145,13 @@ export class LocalHistoryFileSystemProvider implements IFileSystemProvider, IFil
 	readonly onDidChangeCapabilities = Event.None;
 	readonly onDidChangeFile = Event.None;
 
-	async writeFile(resource: URI, content: Uint8Array, opts: FileWriteOptions): Promise<void> { }
+	async writeFile(resource: URI, content: Uint8Array, opts: IFileWriteOptions): Promise<void> { }
 
 	async mkdir(resource: URI): Promise<void> { }
 	async readdir(resource: URI): Promise<[string, FileType][]> { return []; }
 
-	async rename(from: URI, to: URI, opts: FileOverwriteOptions): Promise<void> { }
-	async delete(resource: URI, opts: FileDeleteOptions): Promise<void> { }
+	async rename(from: URI, to: URI, opts: IFileOverwriteOptions): Promise<void> { }
+	async delete(resource: URI, opts: IFileDeleteOptions): Promise<void> { }
 
 	watch(resource: URI, opts: IWatchOptions): IDisposable { return Disposable.None; }
 

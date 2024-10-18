@@ -3,11 +3,11 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Event } from 'vs/base/common/event';
-import { CancellationToken } from 'vs/base/common/cancellation';
-import { URI } from 'vs/base/common/uri';
-import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
-import { SaveSource } from 'vs/workbench/common/editor';
+import { Event } from '../../../../base/common/event.js';
+import { CancellationToken } from '../../../../base/common/cancellation.js';
+import { URI } from '../../../../base/common/uri.js';
+import { createDecorator } from '../../../../platform/instantiation/common/instantiation.js';
+import { SaveSource } from '../../../common/editor.js';
 
 export const IWorkingCopyHistoryService = createDecorator<IWorkingCopyHistoryService>('workingCopyHistoryService');
 
@@ -48,6 +48,12 @@ export interface IWorkingCopyHistoryEntry {
 	 * Associated source with the history entry.
 	 */
 	source: SaveSource;
+
+	/**
+	 * Optional additional metadata associated with the
+	 * source that can help to describe the source.
+	 */
+	sourceDescription: string | undefined;
 }
 
 export interface IWorkingCopyHistoryEntryDescriptor {
@@ -119,6 +125,14 @@ export interface IWorkingCopyHistoryService {
 	 * Removes an entry from the local history if found.
 	 */
 	removeEntry(entry: IWorkingCopyHistoryEntry, token: CancellationToken): Promise<boolean>;
+
+	/**
+	 * Moves entries that either match the `source` or are a child
+	 * of `source` to the `target`.
+	 *
+	 * @returns a list of resources for entries that have moved.
+	 */
+	moveEntries(source: URI, target: URI): Promise<URI[]>;
 
 	/**
 	 * Gets all history entries for the provided resource.

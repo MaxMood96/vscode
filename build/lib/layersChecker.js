@@ -23,36 +23,18 @@ const minimatch_1 = require("minimatch");
 // Types we assume are present in all implementations of JS VMs (node.js, browsers)
 // Feel free to add more core types as you see needed if present in node.js and browsers
 const CORE_TYPES = [
-    'require',
     'setTimeout',
     'clearTimeout',
     'setInterval',
     'clearInterval',
     'console',
-    'log',
-    'info',
-    'warn',
-    'error',
-    'trace',
-    'group',
-    'groupEnd',
-    'table',
-    'assert',
+    'Console',
     'Error',
+    'ErrorConstructor',
     'String',
-    'throws',
-    'stack',
-    'captureStackTrace',
-    'stackTraceLimit',
     'TextDecoder',
     'TextEncoder',
-    'encode',
-    'decode',
     'self',
-    'trimStart',
-    'trimEnd',
-    'trimLeft',
-    'trimRight',
     'queueMicrotask',
     'Array',
     'Uint8Array',
@@ -68,9 +50,31 @@ const CORE_TYPES = [
     'BigInt64Array',
     'btoa',
     'atob',
+    'AbortController',
     'AbortSignal',
     'MessageChannel',
-    'MessagePort'
+    'MessagePort',
+    'URL',
+    'URLSearchParams',
+    'ReadonlyArray',
+    'Event',
+    'EventTarget',
+    'BroadcastChannel',
+    'performance',
+    'Blob',
+    'crypto',
+    'File',
+    'fetch',
+    'RequestInit',
+    'Headers',
+    'Response',
+    '__global',
+    'PerformanceMark',
+    'PerformanceObserver',
+    'ImportMeta',
+    // webcrypto has been available since Node.js 19, but still live in dom.d.ts
+    'Crypto',
+    'SubtleCrypto'
 ];
 // Types that are defined in a common layer but are known to be only
 // available in native environments should not be allowed in browser
@@ -79,7 +83,9 @@ const NATIVE_TYPES = [
     'INativeEnvironmentService',
     'AbstractNativeEnvironmentService',
     'INativeWindowConfiguration',
-    'ICommonNativeHostService'
+    'ICommonNativeHostService',
+    'INativeHostService',
+    'IMainProcessService'
 ];
 const RULES = [
     // Tests: skip
@@ -94,11 +100,41 @@ const RULES = [
             ...CORE_TYPES,
             // Safe access to postMessage() and friends
             'MessageEvent',
-            'data'
         ],
         disallowedTypes: NATIVE_TYPES,
         disallowedDefinitions: [
-            'lib.dom.d.ts',
+            'lib.dom.d.ts', // no DOM
+            '@types/node' // no node.js
+        ]
+    },
+    // Common: vs/base/common/async.ts
+    {
+        target: '**/vs/base/common/async.ts',
+        allowedTypes: [
+            ...CORE_TYPES,
+            // Safe access to requestIdleCallback & cancelIdleCallback
+            'requestIdleCallback',
+            'cancelIdleCallback'
+        ],
+        disallowedTypes: NATIVE_TYPES,
+        disallowedDefinitions: [
+            'lib.dom.d.ts', // no DOM
+            '@types/node' // no node.js
+        ]
+    },
+    // Common: vs/base/common/performance.ts
+    {
+        target: '**/vs/base/common/performance.ts',
+        allowedTypes: [
+            ...CORE_TYPES,
+            // Safe access to Performance
+            'Performance',
+            'PerformanceEntry',
+            'PerformanceTiming'
+        ],
+        disallowedTypes: NATIVE_TYPES,
+        disallowedDefinitions: [
+            'lib.dom.d.ts', // no DOM
             '@types/node' // no node.js
         ]
     },
@@ -108,7 +144,7 @@ const RULES = [
         allowedTypes: CORE_TYPES,
         disallowedTypes: [ /* Ignore native types that are defined from here */],
         disallowedDefinitions: [
-            'lib.dom.d.ts',
+            'lib.dom.d.ts', // no DOM
             '@types/node' // no node.js
         ]
     },
@@ -118,7 +154,7 @@ const RULES = [
         allowedTypes: CORE_TYPES,
         disallowedTypes: [ /* Ignore native types that are defined from here */],
         disallowedDefinitions: [
-            'lib.dom.d.ts',
+            'lib.dom.d.ts', // no DOM
             '@types/node' // no node.js
         ]
     },
@@ -128,7 +164,17 @@ const RULES = [
         allowedTypes: CORE_TYPES,
         disallowedTypes: [ /* Ignore native types that are defined from here */],
         disallowedDefinitions: [
-            'lib.dom.d.ts',
+            'lib.dom.d.ts', // no DOM
+            '@types/node' // no node.js
+        ]
+    },
+    // Common: vs/platform/native/common/nativeHostService.ts
+    {
+        target: '**/vs/platform/native/common/nativeHostService.ts',
+        allowedTypes: CORE_TYPES,
+        disallowedTypes: [ /* Ignore native types that are defined from here */],
+        disallowedDefinitions: [
+            'lib.dom.d.ts', // no DOM
             '@types/node' // no node.js
         ]
     },
@@ -142,7 +188,21 @@ const RULES = [
         ],
         disallowedTypes: NATIVE_TYPES,
         disallowedDefinitions: [
-            'lib.dom.d.ts',
+            'lib.dom.d.ts', // no DOM
+            '@types/node' // no node.js
+        ]
+    },
+    // Common: vs/base/parts/sandbox/electron-sandbox/preload.ts
+    {
+        target: '**/vs/base/parts/sandbox/electron-sandbox/preload.ts',
+        allowedTypes: [
+            ...CORE_TYPES,
+            // Safe access to a very small subset of node.js
+            'process',
+            'NodeJS'
+        ],
+        disallowedTypes: NATIVE_TYPES,
+        disallowedDefinitions: [
             '@types/node' // no node.js
         ]
     },
@@ -152,7 +212,7 @@ const RULES = [
         allowedTypes: CORE_TYPES,
         disallowedTypes: NATIVE_TYPES,
         disallowedDefinitions: [
-            'lib.dom.d.ts',
+            'lib.dom.d.ts', // no DOM
             '@types/node' // no node.js
         ]
     },
@@ -180,18 +240,7 @@ const RULES = [
     // node.js
     {
         target: '**/vs/**/node/**',
-        allowedTypes: [
-            ...CORE_TYPES,
-            // --> types from node.d.ts that duplicate from lib.dom.d.ts
-            'URL',
-            'protocol',
-            'hostname',
-            'port',
-            'pathname',
-            'search',
-            'username',
-            'password'
-        ],
+        allowedTypes: CORE_TYPES,
         disallowedDefinitions: [
             'lib.dom.d.ts' // no DOM
         ]
@@ -204,10 +253,21 @@ const RULES = [
             '@types/node' // no node.js
         ]
     },
-    // Electron (renderer): skip
+    // Electron (utility)
     {
-        target: '**/vs/**/electron-browser/**',
-        skip: true // -> supports all types
+        target: '**/vs/**/electron-utility/**',
+        allowedTypes: [
+            ...CORE_TYPES,
+            // --> types from electron.d.ts that duplicate from lib.dom.d.ts
+            'Event',
+            'Request'
+        ],
+        disallowedTypes: [
+            'ipcMain' // not allowed, use validatedIpcMain instead
+        ],
+        disallowedDefinitions: [
+            'lib.dom.d.ts' // no DOM
+        ]
     },
     // Electron (main)
     {
@@ -217,6 +277,9 @@ const RULES = [
             // --> types from electron.d.ts that duplicate from lib.dom.d.ts
             'Event',
             'Request'
+        ],
+        disallowedTypes: [
+            'ipcMain' // not allowed, use validatedIpcMain instead
         ],
         disallowedDefinitions: [
             'lib.dom.d.ts' // no DOM
@@ -231,43 +294,49 @@ function checkFile(program, sourceFile, rule) {
         if (node.kind !== ts.SyntaxKind.Identifier) {
             return ts.forEachChild(node, checkNode); // recurse down
         }
-        const text = node.getText(sourceFile);
+        const checker = program.getTypeChecker();
+        const symbol = checker.getSymbolAtLocation(node);
+        if (!symbol) {
+            return;
+        }
+        let _parentSymbol = symbol;
+        while (_parentSymbol.parent) {
+            _parentSymbol = _parentSymbol.parent;
+        }
+        const parentSymbol = _parentSymbol;
+        const text = parentSymbol.getName();
         if (rule.allowedTypes?.some(allowed => allowed === text)) {
             return; // override
         }
         if (rule.disallowedTypes?.some(disallowed => disallowed === text)) {
             const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-            console.log(`[build/lib/layersChecker.ts]: Reference to '${text}' violates layer '${rule.target}' (${sourceFile.fileName} (${line + 1},${character + 1})`);
+            console.log(`[build/lib/layersChecker.ts]: Reference to type '${text}' violates layer '${rule.target}' (${sourceFile.fileName} (${line + 1},${character + 1}). Learn more about our source code organization at https://github.com/microsoft/vscode/wiki/Source-Code-Organization.`);
             hasErrors = true;
             return;
         }
-        const checker = program.getTypeChecker();
-        const symbol = checker.getSymbolAtLocation(node);
-        if (symbol) {
-            const declarations = symbol.declarations;
-            if (Array.isArray(declarations)) {
-                DeclarationLoop: for (const declaration of declarations) {
-                    if (declaration) {
-                        const parent = declaration.parent;
-                        if (parent) {
-                            const parentSourceFile = parent.getSourceFile();
-                            if (parentSourceFile) {
-                                const definitionFileName = parentSourceFile.fileName;
-                                if (rule.allowedDefinitions) {
-                                    for (const allowedDefinition of rule.allowedDefinitions) {
-                                        if (definitionFileName.indexOf(allowedDefinition) >= 0) {
-                                            continue DeclarationLoop;
-                                        }
+        const declarations = symbol.declarations;
+        if (Array.isArray(declarations)) {
+            DeclarationLoop: for (const declaration of declarations) {
+                if (declaration) {
+                    const parent = declaration.parent;
+                    if (parent) {
+                        const parentSourceFile = parent.getSourceFile();
+                        if (parentSourceFile) {
+                            const definitionFileName = parentSourceFile.fileName;
+                            if (rule.allowedDefinitions) {
+                                for (const allowedDefinition of rule.allowedDefinitions) {
+                                    if (definitionFileName.indexOf(allowedDefinition) >= 0) {
+                                        continue DeclarationLoop;
                                     }
                                 }
-                                if (rule.disallowedDefinitions) {
-                                    for (const disallowedDefinition of rule.disallowedDefinitions) {
-                                        if (definitionFileName.indexOf(disallowedDefinition) >= 0) {
-                                            const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-                                            console.log(`[build/lib/layersChecker.ts]: Reference to '${text}' from '${disallowedDefinition}' violates layer '${rule.target}' (${sourceFile.fileName} (${line + 1},${character + 1})`);
-                                            hasErrors = true;
-                                            return;
-                                        }
+                            }
+                            if (rule.disallowedDefinitions) {
+                                for (const disallowedDefinition of rule.disallowedDefinitions) {
+                                    if (definitionFileName.indexOf(disallowedDefinition) >= 0) {
+                                        const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+                                        console.log(`[build/lib/layersChecker.ts]: Reference to symbol '${text}' from '${disallowedDefinition}' violates layer '${rule.target}' (${sourceFile.fileName} (${line + 1},${character + 1}) Learn more about our source code organization at https://github.com/microsoft/vscode/wiki/Source-Code-Organization.`);
+                                        hasErrors = true;
+                                        return;
                                     }
                                 }
                             }
@@ -302,3 +371,4 @@ for (const sourceFile of program.getSourceFiles()) {
 if (hasErrors) {
     process.exit(1);
 }
+//# sourceMappingURL=layersChecker.js.map
