@@ -2,12 +2,15 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-import { PreTrie, ExplorerFileNestingTrie, SufTrie } from 'vs/workbench/contrib/files/common/explorerFileNestingTrie';
-import * as assert from 'assert';
+import { PreTrie, ExplorerFileNestingTrie, SufTrie } from '../../common/explorerFileNestingTrie.js';
+import assert from 'assert';
+import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
 
 const fakeFilenameAttributes = { dirname: 'mydir', basename: '', extname: '' };
 
 suite('SufTrie', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
 	test('exactMatches', () => {
 		const t = new SufTrie();
 		t.add('.npmrc', 'MyKey');
@@ -28,7 +31,7 @@ suite('SufTrie', () => {
 
 	test('starSubstitutes', () => {
 		const t = new SufTrie();
-		t.add('*.npmrc', '$(capture).json');
+		t.add('*.npmrc', '${capture}.json');
 		assert.deepStrictEqual(t.get('.npmrc', fakeFilenameAttributes), ['.json']);
 		assert.deepStrictEqual(t.get('npmrc', fakeFilenameAttributes), []);
 		assert.deepStrictEqual(t.get('.npmrcs', fakeFilenameAttributes), []);
@@ -52,9 +55,9 @@ suite('SufTrie', () => {
 
 	test('multiSubstitutes', () => {
 		const t = new SufTrie();
-		t.add('*.npmrc', 'Key1.$(capture).js');
-		t.add('*.json', 'Key2.$(capture).js');
-		t.add('*d.npmrc', 'Key3.$(capture).js');
+		t.add('*.npmrc', 'Key1.${capture}.js');
+		t.add('*.json', 'Key2.${capture}.js');
+		t.add('*d.npmrc', 'Key3.${capture}.js');
 		assert.deepStrictEqual(t.get('.npmrc', fakeFilenameAttributes), ['Key1..js']);
 		assert.deepStrictEqual(t.get('npmrc', fakeFilenameAttributes), []);
 		assert.deepStrictEqual(t.get('.npmrcs', fakeFilenameAttributes), []);
@@ -67,6 +70,8 @@ suite('SufTrie', () => {
 });
 
 suite('PreTrie', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
 	test('exactMatches', () => {
 		const t = new PreTrie();
 		t.add('.npmrc', 'MyKey');
@@ -87,7 +92,7 @@ suite('PreTrie', () => {
 
 	test('starSubstitutes', () => {
 		const t = new PreTrie();
-		t.add('*.npmrc', '$(capture).json');
+		t.add('*.npmrc', '${capture}.json');
 		assert.deepStrictEqual(t.get('.npmrc', fakeFilenameAttributes), ['.json']);
 		assert.deepStrictEqual(t.get('npmrc', fakeFilenameAttributes), []);
 		assert.deepStrictEqual(t.get('.npmrcs', fakeFilenameAttributes), []);
@@ -111,9 +116,9 @@ suite('PreTrie', () => {
 
 	test('multiSubstitutes', () => {
 		const t = new PreTrie();
-		t.add('*.npmrc', 'Key1.$(capture).js');
-		t.add('*.json', 'Key2.$(capture).js');
-		t.add('*d.npmrc', 'Key3.$(capture).js');
+		t.add('*.npmrc', 'Key1.${capture}.js');
+		t.add('*.json', 'Key2.${capture}.js');
+		t.add('*d.npmrc', 'Key3.${capture}.js');
 		assert.deepStrictEqual(t.get('.npmrc', fakeFilenameAttributes), ['Key1..js']);
 		assert.deepStrictEqual(t.get('npmrc', fakeFilenameAttributes), []);
 		assert.deepStrictEqual(t.get('.npmrcs', fakeFilenameAttributes), []);
@@ -135,6 +140,8 @@ suite('PreTrie', () => {
 });
 
 suite('StarTrie', () => {
+	ensureNoDisposablesAreLeakedInTestSuite();
+
 	const assertMapEquals = (actual: Map<string, Set<string>>, expected: Record<string, string[]>) => {
 		const actualStr = [...actual.entries()].map(e => `${e[0]} => [${[...e[1].keys()].join()}]`);
 		const expectedStr = Object.entries(expected).map(e => `${e[0]}: [${[e[1]].join()}]`);
@@ -154,7 +161,7 @@ suite('StarTrie', () => {
 
 	test('does added extension nesting', () => {
 		const t = new ExplorerFileNestingTrie([
-			['*', ['$(capture).*']],
+			['*', ['${capture}.*']],
 		]);
 		const nesting = t.nest([
 			'file',
@@ -178,8 +185,8 @@ suite('StarTrie', () => {
 
 	test('does ext specific nesting', () => {
 		const t = new ExplorerFileNestingTrie([
-			['*.ts', ['$(capture).js']],
-			['*.js', ['$(capture).map']],
+			['*.ts', ['${capture}.js']],
+			['*.js', ['${capture}.map']],
 		]);
 		const nesting = t.nest([
 			'a.ts',
@@ -207,14 +214,14 @@ suite('StarTrie', () => {
 
 	test('handles loops', () => {
 		const t = new ExplorerFileNestingTrie([
-			['*.a', ['$(capture).b', '$(capture).c']],
-			['*.b', ['$(capture).a']],
-			['*.c', ['$(capture).d']],
+			['*.a', ['${capture}.b', '${capture}.c']],
+			['*.b', ['${capture}.a']],
+			['*.c', ['${capture}.d']],
 
-			['*.aa', ['$(capture).bb']],
-			['*.bb', ['$(capture).cc', '$(capture).dd']],
-			['*.cc', ['$(capture).aa']],
-			['*.dd', ['$(capture).ee']],
+			['*.aa', ['${capture}.bb']],
+			['*.bb', ['${capture}.cc', '${capture}.dd']],
+			['*.cc', ['${capture}.aa']],
+			['*.dd', ['${capture}.ee']],
 		]);
 		const nesting = t.nest([
 			'.a', '.b', '.c', '.d',
@@ -241,8 +248,8 @@ suite('StarTrie', () => {
 
 	test('does general bidirectional suffix matching', () => {
 		const t = new ExplorerFileNestingTrie([
-			['*-vsdoc.js', ['$(capture).js']],
-			['*.js', [`$(capture)-vscdoc.js`]],
+			['*-vsdoc.js', ['${capture}.js']],
+			['*.js', ['${capture}-vscdoc.js']],
 		]);
 
 		const nesting = t.nest([
@@ -260,8 +267,8 @@ suite('StarTrie', () => {
 
 	test('does general bidirectional prefix matching', () => {
 		const t = new ExplorerFileNestingTrie([
-			['vsdoc-*.js', ['$(capture).js']],
-			['*.js', [`vscdoc-$(capture).js`]],
+			['vsdoc-*.js', ['${capture}.js']],
+			['*.js', ['vscdoc-${capture}.js']],
 		]);
 
 		const nesting = t.nest([
@@ -279,8 +286,8 @@ suite('StarTrie', () => {
 
 	test('does general bidirectional general matching', () => {
 		const t = new ExplorerFileNestingTrie([
-			['foo-*-bar.js', ['$(capture).js']],
-			['*.js', [`bib-$(capture)-bap.js`]],
+			['foo-*-bar.js', ['${capture}.js']],
+			['*.js', ['bib-${capture}-bap.js']],
 		]);
 
 		const nesting = t.nest([
@@ -298,7 +305,7 @@ suite('StarTrie', () => {
 
 	test('does extension specific path segment matching', () => {
 		const t = new ExplorerFileNestingTrie([
-			['*.js', ['$(capture).*.js']],
+			['*.js', ['${capture}.*.js']],
 		]);
 
 		const nesting = t.nest([
@@ -360,7 +367,7 @@ suite('StarTrie', () => {
 
 	test('basename expansion', () => {
 		const t = new ExplorerFileNestingTrie([
-			['*-vsdoc.js', ['$(basename).doc']],
+			['*-vsdoc.js', ['${basename}.doc']],
 		]);
 
 		const nesting1 = t.nest([
@@ -377,7 +384,7 @@ suite('StarTrie', () => {
 
 	test('extname expansion', () => {
 		const t = new ExplorerFileNestingTrie([
-			['*-vsdoc.js', ['$(extname).doc']],
+			['*-vsdoc.js', ['${extname}.doc']],
 		]);
 
 		const nesting1 = t.nest([
@@ -393,6 +400,28 @@ suite('StarTrie', () => {
 	});
 
 	test('added segment matcher', () => {
+		const t = new ExplorerFileNestingTrie([
+			['*', ['${basename}.*.${extname}']],
+		]);
+
+		const nesting1 = t.nest([
+			'some.file',
+			'some.html.file',
+			'some.html.nested.file',
+			'other.file',
+			'some.thing',
+			'some.thing.else',
+		], 'mydir');
+
+		assertMapEquals(nesting1, {
+			'some.file': ['some.html.file', 'some.html.nested.file'],
+			'other.file': [],
+			'some.thing': [],
+			'some.thing.else': [],
+		});
+	});
+
+	test('added segment matcher (old format)', () => {
 		const t = new ExplorerFileNestingTrie([
 			['*', ['$(basename).*.$(extname)']],
 		]);
@@ -416,7 +445,7 @@ suite('StarTrie', () => {
 
 	test('dirname matching', () => {
 		const t = new ExplorerFileNestingTrie([
-			['index.ts', ['$(dirname).ts']],
+			['index.ts', ['${dirname}.ts']],
 		]);
 
 		const nesting1 = t.nest([
@@ -433,36 +462,36 @@ suite('StarTrie', () => {
 
 	test.skip('is fast', () => {
 		const bigNester = new ExplorerFileNestingTrie([
-			['*', ['$(capture).*']],
-			['*.js', ['$(capture).*.js', '$(capture).map']],
-			['*.jsx', ['$(capture).js']],
-			['*.ts', ['$(capture).js', '$(capture).*.ts']],
-			['*.tsx', ['$(capture).js']],
-			['*.css', ['$(capture).*.css', '$(capture).map']],
-			['*.html', ['$(capture).*.html']],
-			['*.htm', ['$(capture).*.htm']],
-			['*.less', ['$(capture).*.less', '$(capture).css']],
-			['*.scss', ['$(capture).*.scss', '$(capture).css']],
-			['*.sass', ['$(capture).css']],
-			['*.styl', ['$(capture).css']],
-			['*.coffee', ['$(capture).*.coffee', '$(capture).js']],
-			['*.iced', ['$(capture).*.iced', '$(capture).js']],
-			['*.config', ['$(capture).*.config']],
-			['*.cs', ['$(capture).*.cs', '$(capture).cs.d.ts']],
-			['*.vb', ['$(capture).*.vb']],
-			['*.json', ['$(capture).*.json']],
-			['*.md', ['$(capture).html']],
-			['*.mdown', ['$(capture).html']],
-			['*.markdown', ['$(capture).html']],
-			['*.mdwn', ['$(capture).html']],
-			['*.svg', ['$(capture).svgz']],
-			['*.a', ['$(capture).b']],
-			['*.b', ['$(capture).a']],
-			['*.resx', ['$(capture).designer.cs']],
+			['*', ['${capture}.*']],
+			['*.js', ['${capture}.*.js', '${capture}.map']],
+			['*.jsx', ['${capture}.js']],
+			['*.ts', ['${capture}.js', '${capture}.*.ts']],
+			['*.tsx', ['${capture}.js']],
+			['*.css', ['${capture}.*.css', '${capture}.map']],
+			['*.html', ['${capture}.*.html']],
+			['*.htm', ['${capture}.*.htm']],
+			['*.less', ['${capture}.*.less', '${capture}.css']],
+			['*.scss', ['${capture}.*.scss', '${capture}.css']],
+			['*.sass', ['${capture}.css']],
+			['*.styl', ['${capture}.css']],
+			['*.coffee', ['${capture}.*.coffee', '${capture}.js']],
+			['*.iced', ['${capture}.*.iced', '${capture}.js']],
+			['*.config', ['${capture}.*.config']],
+			['*.cs', ['${capture}.*.cs', '${capture}.cs.d.ts']],
+			['*.vb', ['${capture}.*.vb']],
+			['*.json', ['${capture}.*.json']],
+			['*.md', ['${capture}.html']],
+			['*.mdown', ['${capture}.html']],
+			['*.markdown', ['${capture}.html']],
+			['*.mdwn', ['${capture}.html']],
+			['*.svg', ['${capture}.svgz']],
+			['*.a', ['${capture}.b']],
+			['*.b', ['${capture}.a']],
+			['*.resx', ['${capture}.designer.cs']],
 			['package.json', ['.npmrc', 'npm-shrinkwrap.json', 'yarn.lock', '.yarnclean', '.yarnignore', '.yarn-integrity', '.yarnrc']],
 			['bower.json', ['.bowerrc']],
-			['*-vsdoc.js', ['$(capture).js']],
-			['*.tt', ['$(capture).*']]
+			['*-vsdoc.js', ['${capture}.js']],
+			['*.tt', ['${capture}.*']]
 		]);
 
 		const bigFiles = Array.from({ length: 50000 / 6 }).map((_, i) => [

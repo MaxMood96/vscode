@@ -3,10 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { StopWatch } from 'vs/base/common/stopwatch';
-import { ICodeEditor } from 'vs/editor/browser/editorBrowser';
-import { EditorAction, registerEditorAction, ServicesAccessor } from 'vs/editor/browser/editorExtensions';
-import * as nls from 'vs/nls';
+import { StopWatch } from '../../../../base/common/stopwatch.js';
+import { ICodeEditor } from '../../../browser/editorBrowser.js';
+import { EditorAction, registerEditorAction, ServicesAccessor } from '../../../browser/editorExtensions.js';
+import * as nls from '../../../../nls.js';
 
 class ForceRetokenizeAction extends EditorAction {
 	constructor() {
@@ -23,9 +23,9 @@ class ForceRetokenizeAction extends EditorAction {
 			return;
 		}
 		const model = editor.getModel();
-		model.resetTokenization();
-		const sw = new StopWatch(true);
-		model.forceTokenization(model.getLineCount());
+		model.tokenization.resetTokenization();
+		const sw = new StopWatch();
+		model.tokenization.forceTokenization(model.getLineCount());
 		sw.stop();
 		console.log(`tokenization took ${sw.elapsed()}`);
 

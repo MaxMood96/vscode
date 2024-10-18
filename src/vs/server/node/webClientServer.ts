@@ -3,38 +3,40 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import * as fs from 'fs';
+import { createReadStream, promises } from 'fs';
 import * as path from 'path';
 import * as http from 'http';
 import * as url from 'url';
-import * as util from 'util';
 import * as cookie from 'cookie';
 import * as crypto from 'crypto';
-import { isEqualOrParent } from 'vs/base/common/extpath';
-import { getMediaMime } from 'vs/base/common/mime';
-import { isLinux } from 'vs/base/common/platform';
-import { ILogService } from 'vs/platform/log/common/log';
-import { IServerEnvironmentService } from 'vs/server/node/serverEnvironmentService';
-import { extname, dirname, join, normalize } from 'vs/base/common/path';
-import { FileAccess, connectionTokenCookieName, connectionTokenQueryName, Schemas } from 'vs/base/common/network';
-import { generateUuid } from 'vs/base/common/uuid';
-import { IProductService } from 'vs/platform/product/common/productService';
-import { ServerConnectionToken, ServerConnectionTokenType } from 'vs/server/node/serverConnectionToken';
-import { asText, IRequestService } from 'vs/platform/request/common/request';
-import { IHeaders } from 'vs/base/parts/request/common/request';
-import { CancellationToken } from 'vs/base/common/cancellation';
-import { URI } from 'vs/base/common/uri';
-import { streamToBuffer } from 'vs/base/common/buffer';
-import { IProductConfiguration } from 'vs/base/common/product';
-import { isString } from 'vs/base/common/types';
+import { isEqualOrParent } from '../../base/common/extpath.js';
+import { getMediaMime } from '../../base/common/mime.js';
+import { isLinux } from '../../base/common/platform.js';
+import { ILogService } from '../../platform/log/common/log.js';
+import { IServerEnvironmentService } from './serverEnvironmentService.js';
+import { extname, dirname, join, normalize } from '../../base/common/path.js';
+import { FileAccess, connectionTokenCookieName, connectionTokenQueryName, Schemas, builtinExtensionsPath } from '../../base/common/network.js';
+import { generateUuid } from '../../base/common/uuid.js';
+import { IProductService } from '../../platform/product/common/productService.js';
+import { ServerConnectionToken, ServerConnectionTokenType } from './serverConnectionToken.js';
+import { asTextOrError, IRequestService } from '../../platform/request/common/request.js';
+import { IHeaders } from '../../base/parts/request/common/request.js';
+import { CancellationToken } from '../../base/common/cancellation.js';
+import { URI } from '../../base/common/uri.js';
+import { streamToBuffer } from '../../base/common/buffer.js';
+import { IProductConfiguration } from '../../base/common/product.js';
+import { isString } from '../../base/common/types.js';
+import { CharCode } from '../../base/common/charCode.js';
+import { IExtensionManifest } from '../../platform/extensions/common/extensions.js';
+import { ICSSDevelopmentService } from '../../platform/cssDev/node/cssDevService.js';
 
-const textMimeType = {
+const textMimeType: { [ext: string]: string | undefined } = {
 	'.html': 'text/html',
 	'.js': 'text/javascript',
 	'.json': 'application/json',
 	'.css': 'text/css',
 	'.svg': 'image/svg+xml',
-} as { [ext: string]: string | undefined };
+};
 
 /**
  * Return an error to the client.
@@ -44,53 +46,76 @@ export async function serveError(req: http.IncomingMessage, res: http.ServerResp
 	res.end(errorMessage);
 }
 
+export const enum CacheControl {
+	NO_CACHING, ETAG, NO_EXPIRY
+}
+
 /**
  * Serve a file at a given path or 404 if the file is missing.
  */
-export async function serveFile(logService: ILogService, req: http.IncomingMessage, res: http.ServerResponse, filePath: string, responseHeaders: Record<string, string> = Object.create(null)): Promise<void> {
+export async function serveFile(filePath: string, cacheControl: CacheControl, logService: ILogService, req: http.IncomingMessage, res: http.ServerResponse, responseHeaders: Record<string, string>): Promise<void> {
 	try {
-		const stat = await util.promisify(fs.stat)(filePath);
+		const stat = await promises.stat(filePath); // throws an error if file doesn't exist
+		if (cacheControl === CacheControl.ETAG) {
 
-		// Check if file modified since
-		const etag = `W/"${[stat.ino, stat.size, stat.mtime.getTime()].join('-')}"`; // weak validator (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/ETag)
-		if (req.headers['if-none-match'] === etag) {
-			res.writeHead(304);
-			return res.end();
+			// Check if file modified since
+			const etag = `W/"${[stat.ino, stat.size, stat.mtime.getTime()].join('-')}"`; // weak validator (https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/ETag)
+			if (req.headers['if-none-match'] === etag) {
+				res.writeHead(304);
+				return void res.end();
+			}
+
+			responseHeaders['Etag'] = etag;
+		} else if (cacheControl === CacheControl.NO_EXPIRY) {
+			responseHeaders['Cache-Control'] = 'public, max-age=31536000';
+		} else if (cacheControl === CacheControl.NO_CACHING) {
+			responseHeaders['Cache-Control'] = 'no-store';
 		}
 
-		// Headers
 		responseHeaders['Content-Type'] = textMimeType[extname(filePath)] || getMediaMime(filePath) || 'text/plain';
-		responseHeaders['Etag'] = etag;
 
 		res.writeHead(200, responseHeaders);
 
 		// Data
-		fs.createReadStream(filePath).pipe(res);
+		createReadStream(filePath).pipe(res);
 	} catch (error) {
 		if (error.code !== 'ENOENT') {
 			logService.error(error);
 			console.error(error.toString());
+		} else {
+			console.error(`File not found: ${filePath}`);
 		}
 
 		res.writeHead(404, { 'Content-Type': 'text/plain' });
-		return res.end('Not found');
+		return void res.end('Not found');
 	}
 }
 
-const APP_ROOT = dirname(FileAccess.asFileUri('', require).fsPath);
+const APP_ROOT = dirname(FileAccess.asFileUri('').fsPath);
 
 export class WebClientServer {
 
 	private readonly _webExtensionResourceUrlTemplate: URI | undefined;
 
+	private readonly _staticRoute: string;
+	private readonly _callbackRoute: string;
+	private readonly _webExtensionRoute: string;
+
 	constructor(
 		private readonly _connectionToken: ServerConnectionToken,
+		private readonly _basePath: string,
+		readonly serverRootPath: string,
 		@IServerEnvironmentService private readonly _environmentService: IServerEnvironmentService,
 		@ILogService private readonly _logService: ILogService,
 		@IRequestService private readonly _requestService: IRequestService,
 		@IProductService private readonly _productService: IProductService,
+		@ICSSDevelopmentService private readonly _cssDevService: ICSSDevelopmentService
 	) {
 		this._webExtensionResourceUrlTemplate = this._productService.extensionsGallery?.resourceUrlTemplate ? URI.parse(this._productService.extensionsGallery.resourceUrlTemplate) : undefined;
+
+		this._staticRoute = `${serverRootPath}/static`;
+		this._callbackRoute = `${serverRootPath}/callback`;
+		this._webExtensionRoute = `${serverRootPath}/web-extension-resource`;
 	}
 
 	/**
@@ -102,20 +127,17 @@ export class WebClientServer {
 		try {
 			const pathname = parsedUrl.pathname!;
 
-			if (pathname === '/favicon.ico' || pathname === '/manifest.json' || pathname === '/code-192.png' || pathname === '/code-512.png') {
-				return serveFile(this._logService, req, res, join(APP_ROOT, 'resources', 'server', pathname.substr(1)));
-			}
-			if (/^\/static\//.test(pathname)) {
+			if (pathname.startsWith(this._staticRoute) && pathname.charCodeAt(this._staticRoute.length) === CharCode.Slash) {
 				return this._handleStatic(req, res, parsedUrl);
 			}
-			if (pathname === '/') {
+			if (pathname === this._basePath) {
 				return this._handleRoot(req, res, parsedUrl);
 			}
-			if (pathname === '/callback') {
+			if (pathname === this._callbackRoute) {
 				// callback support
 				return this._handleCallback(res);
 			}
-			if (/^\/web-extension-resource\//.test(pathname)) {
+			if (pathname.startsWith(this._webExtensionRoute) && pathname.charCodeAt(this._webExtensionRoute.length) === CharCode.Slash) {
 				// extension resource support
 				return this._handleWebExtensionResource(req, res, parsedUrl);
 			}
@@ -128,23 +150,22 @@ export class WebClientServer {
 			return serveError(req, res, 500, 'Internal Server Error.');
 		}
 	}
-
 	/**
 	 * Handle HTTP requests for /static/*
 	 */
 	private async _handleStatic(req: http.IncomingMessage, res: http.ServerResponse, parsedUrl: url.UrlWithParsedQuery): Promise<void> {
 		const headers: Record<string, string> = Object.create(null);
 
-		// Strip `/static/` from the path
+		// Strip the this._staticRoute from the path
 		const normalizedPathname = decodeURIComponent(parsedUrl.pathname!); // support paths that are uri-encoded (e.g. spaces => %20)
-		const relativeFilePath = normalize(normalizedPathname.substr('/static/'.length));
+		const relativeFilePath = normalizedPathname.substring(this._staticRoute.length + 1);
 
-		const filePath = join(APP_ROOT, relativeFilePath);
+		const filePath = join(APP_ROOT, relativeFilePath); // join also normalizes the path
 		if (!isEqualOrParent(filePath, APP_ROOT, !isLinux)) {
 			return serveError(req, res, 400, `Bad request.`);
 		}
 
-		return serveFile(this._logService, req, res, filePath, headers);
+		return serveFile(filePath, this._environmentService.isBuilt ? CacheControl.NO_EXPIRY : CacheControl.ETAG, this._logService, req, res, headers);
 	}
 
 	private _getResourceURLTemplateAuthority(uri: URI): string | undefined {
@@ -162,7 +183,7 @@ export class WebClientServer {
 
 		// Strip `/web-extension-resource/` from the path
 		const normalizedPathname = decodeURIComponent(parsedUrl.pathname!); // support paths that are uri-encoded (e.g. spaces => %20)
-		const path = normalize(normalizedPathname.substr('/web-extension-resource/'.length));
+		const path = normalize(normalizedPathname.substring(this._webExtensionRoute.length + 1));
 		const uri = URI.parse(path).with({
 			scheme: this._webExtensionResourceUrlTemplate.scheme,
 			authority: path.substring(0, path.indexOf('/')),
@@ -197,12 +218,12 @@ export class WebClientServer {
 		if (status !== 200) {
 			let text: string | null = null;
 			try {
-				text = await asText(context);
+				text = await asTextOrError(context);
 			} catch (error) {/* Ignore */ }
 			return serveError(req, res, status, text || `Request failed with status ${status}`);
 		}
 
-		const responseHeaders: Record<string, string> = Object.create(null);
+		const responseHeaders: Record<string, string | string[]> = Object.create(null);
 		const setResponseHeader = (header: string) => {
 			const value = context.res.headers[header];
 			if (value) {
@@ -215,16 +236,13 @@ export class WebClientServer {
 		setResponseHeader('Content-Type');
 		res.writeHead(200, responseHeaders);
 		const buffer = await streamToBuffer(context.stream);
-		return res.end(buffer.buffer);
+		return void res.end(buffer.buffer);
 	}
 
 	/**
 	 * Handle HTTP requests for /
 	 */
 	private async _handleRoot(req: http.IncomingMessage, res: http.ServerResponse, parsedUrl: url.UrlWithParsedQuery): Promise<void> {
-		if (!req.headers.host) {
-			return serveError(req, res, 400, `Bad request.`);
-		}
 
 		const queryConnectionToken = parsedUrl.query[connectionTokenQueryName];
 		if (typeof queryConnectionToken === 'string') {
@@ -241,71 +259,143 @@ export class WebClientServer {
 			);
 
 			const newQuery = Object.create(null);
-			for (let key in parsedUrl.query) {
+			for (const key in parsedUrl.query) {
 				if (key !== connectionTokenQueryName) {
 					newQuery[key] = parsedUrl.query[key];
 				}
 			}
-			const newLocation = url.format({ pathname: '/', query: newQuery });
+			const newLocation = url.format({ pathname: parsedUrl.pathname, query: newQuery });
 			responseHeaders['Location'] = newLocation;
 
 			res.writeHead(302, responseHeaders);
-			return res.end();
+			return void res.end();
 		}
 
-		const remoteAuthority = req.headers.host;
+		const getFirstHeader = (headerName: string) => {
+			const val = req.headers[headerName];
+			return Array.isArray(val) ? val[0] : val;
+		};
 
-		function escapeAttribute(value: string): string {
-			return value.replace(/"/g, '&quot;');
+		const useTestResolver = (!this._environmentService.isBuilt && this._environmentService.args['use-test-resolver']);
+		const remoteAuthority = (
+			useTestResolver
+				? 'test+test'
+				: (getFirstHeader('x-original-host') || getFirstHeader('x-forwarded-host') || req.headers.host)
+		);
+		if (!remoteAuthority) {
+			return serveError(req, res, 400, `Bad request.`);
+		}
+
+		function asJSON(value: unknown): string {
+			return JSON.stringify(value).replace(/"/g, '&quot;');
 		}
 
 		let _wrapWebWorkerExtHostInIframe: undefined | false = undefined;
-		if (this._environmentService.driverHandle) {
+		if (this._environmentService.args['enable-smoke-test-driver']) {
 			// integration tests run at a time when the built output is not yet published to the CDN
 			// so we must disable the iframe wrapping because the iframe URL will give a 404
 			_wrapWebWorkerExtHostInIframe = false;
 		}
 
-		const resolveWorkspaceURI = (defaultLocation?: string) => defaultLocation && URI.from({ scheme: Schemas.vscodeRemote, path: path.resolve(defaultLocation), authority: remoteAuthority });
+		const resolveWorkspaceURI = (defaultLocation?: string) => defaultLocation && URI.file(path.resolve(defaultLocation)).with({ scheme: Schemas.vscodeRemote, authority: remoteAuthority });
 
-		const filePath = FileAccess.asFileUri(this._environmentService.isBuilt ? 'vs/code/browser/workbench/workbench.html' : 'vs/code/browser/workbench/workbench-dev.html', require).fsPath;
+		const filePath = FileAccess.asFileUri(`vs/code/browser/workbench/workbench${this._environmentService.isBuilt ? '' : '-dev'}.html`).fsPath;
 		const authSessionInfo = !this._environmentService.isBuilt && this._environmentService.args['github-auth'] ? {
 			id: generateUuid(),
 			providerId: 'github',
 			accessToken: this._environmentService.args['github-auth'],
 			scopes: [['user:email'], ['repo']]
 		} : undefined;
-		const data = (await util.promisify(fs.readFile)(filePath)).toString()
-			.replace('{{WORKBENCH_WEB_CONFIGURATION}}', escapeAttribute(JSON.stringify({
-				remoteAuthority,
-				_wrapWebWorkerExtHostInIframe,
-				developmentOptions: { enableSmokeTestDriver: this._environmentService.driverHandle === 'web' ? true : undefined },
-				settingsSyncOptions: !this._environmentService.isBuilt && this._environmentService.args['enable-sync'] ? { enabled: true } : undefined,
-				enableWorkspaceTrust: !this._environmentService.args['disable-workspace-trust'],
-				folderUri: resolveWorkspaceURI(this._environmentService.args['default-folder']),
-				workspaceUri: resolveWorkspaceURI(this._environmentService.args['default-workspace']),
-				productConfiguration: <Partial<IProductConfiguration>>{
-					embedderIdentifier: 'server-distro',
-					extensionsGallery: this._webExtensionResourceUrlTemplate ? {
-						...this._productService.extensionsGallery,
-						'resourceUrlTemplate': this._webExtensionResourceUrlTemplate.with({
-							scheme: 'http',
-							authority: remoteAuthority,
-							path: `web-extension-resource/${this._webExtensionResourceUrlTemplate.authority}${this._webExtensionResourceUrlTemplate.path}`
-						}).toString(true)
-					} : undefined
-				}
-			})))
-			.replace('{{WORKBENCH_AUTH_SESSION}}', () => authSessionInfo ? escapeAttribute(JSON.stringify(authSessionInfo)) : '');
+
+		const productConfiguration = {
+			embedderIdentifier: 'server-distro',
+			extensionsGallery: this._webExtensionResourceUrlTemplate && this._productService.extensionsGallery ? {
+				...this._productService.extensionsGallery,
+				resourceUrlTemplate: this._webExtensionResourceUrlTemplate.with({
+					scheme: 'http',
+					authority: remoteAuthority,
+					path: `${this._webExtensionRoute}/${this._webExtensionResourceUrlTemplate.authority}${this._webExtensionResourceUrlTemplate.path}`
+				}).toString(true)
+			} : undefined
+		} satisfies Partial<IProductConfiguration>;
+
+		if (!this._environmentService.isBuilt) {
+			try {
+				const productOverrides = JSON.parse((await promises.readFile(join(APP_ROOT, 'product.overrides.json'))).toString());
+				Object.assign(productConfiguration, productOverrides);
+			} catch (err) {/* Ignore Error */ }
+		}
+
+		const workbenchWebConfiguration = {
+			remoteAuthority,
+			serverBasePath: this._basePath,
+			_wrapWebWorkerExtHostInIframe,
+			developmentOptions: { enableSmokeTestDriver: this._environmentService.args['enable-smoke-test-driver'] ? true : undefined, logLevel: this._logService.getLevel() },
+			settingsSyncOptions: !this._environmentService.isBuilt && this._environmentService.args['enable-sync'] ? { enabled: true } : undefined,
+			enableWorkspaceTrust: !this._environmentService.args['disable-workspace-trust'],
+			folderUri: resolveWorkspaceURI(this._environmentService.args['default-folder']),
+			workspaceUri: resolveWorkspaceURI(this._environmentService.args['default-workspace']),
+			productConfiguration,
+			callbackRoute: this._callbackRoute
+		};
+
+		const cookies = cookie.parse(req.headers.cookie || '');
+		const locale = cookies['vscode.nls.locale'] || req.headers['accept-language']?.split(',')[0]?.toLowerCase() || 'en';
+		let WORKBENCH_NLS_BASE_URL: string | undefined;
+		let WORKBENCH_NLS_URL: string;
+		if (!locale.startsWith('en') && this._productService.nlsCoreBaseUrl) {
+			WORKBENCH_NLS_BASE_URL = this._productService.nlsCoreBaseUrl;
+			WORKBENCH_NLS_URL = `${WORKBENCH_NLS_BASE_URL}${this._productService.commit}/${this._productService.version}/${locale}/nls.messages.js`;
+		} else {
+			WORKBENCH_NLS_URL = ''; // fallback will apply
+		}
+
+		const values: { [key: string]: string } = {
+			WORKBENCH_WEB_CONFIGURATION: asJSON(workbenchWebConfiguration),
+			WORKBENCH_AUTH_SESSION: authSessionInfo ? asJSON(authSessionInfo) : '',
+			WORKBENCH_WEB_BASE_URL: this._staticRoute,
+			WORKBENCH_NLS_URL,
+			WORKBENCH_NLS_FALLBACK_URL: `${this._staticRoute}/out/nls.messages.js`
+		};
+
+		// DEV ---------------------------------------------------------------------------------------
+		// DEV: This is for development and enables loading CSS via import-statements via import-maps.
+		// DEV: The server needs to send along all CSS modules so that the client can construct the
+		// DEV: import-map.
+		// DEV ---------------------------------------------------------------------------------------
+		if (this._cssDevService.isEnabled) {
+			const cssModules = await this._cssDevService.getCssModules();
+			values['WORKBENCH_DEV_CSS_MODULES'] = JSON.stringify(cssModules);
+		}
+
+		if (useTestResolver) {
+			const bundledExtensions: { extensionPath: string; packageJSON: IExtensionManifest }[] = [];
+			for (const extensionPath of ['vscode-test-resolver', 'github-authentication']) {
+				const packageJSON = JSON.parse((await promises.readFile(FileAccess.asFileUri(`${builtinExtensionsPath}/${extensionPath}/package.json`).fsPath)).toString());
+				bundledExtensions.push({ extensionPath, packageJSON });
+			}
+			values['WORKBENCH_BUILTIN_EXTENSIONS'] = asJSON(bundledExtensions);
+		}
+
+		let data;
+		try {
+			const workbenchTemplate = (await promises.readFile(filePath)).toString();
+			data = workbenchTemplate.replace(/\{\{([^}]+)\}\}/g, (_, key) => values[key] ?? 'undefined');
+		} catch (e) {
+			res.writeHead(404, { 'Content-Type': 'text/plain' });
+			return void res.end('Not found');
+		}
+
+		const webWorkerExtensionHostIframeScriptSHA = 'sha256-2Q+j4hfT09+1+imS46J2YlkCtHWQt0/BE79PXjJ0ZJ8=';
 
 		const cspDirectives = [
 			'default-src \'self\';',
 			'img-src \'self\' https: data: blob:;',
 			'media-src \'self\';',
-			`script-src 'self' 'unsafe-eval' ${this._getScriptCspHashes(data).join(' ')} 'sha256-fh3TwPMflhsEIpR8g1OYTIMVWhXTLcjQ9kh2tIpmv54=' http://${remoteAuthority};`, // the sha is the same as in src/vs/workbench/services/extensions/worker/webWorkerExtensionHostIframe.html
+			`script-src 'self' 'unsafe-eval' ${WORKBENCH_NLS_BASE_URL ?? ''} blob: 'nonce-1nline-m4p' ${this._getScriptCspHashes(data).join(' ')} '${webWorkerExtensionHostIframeScriptSHA}' 'sha256-/r7rqQ+yrxt57sxLuQ6AMYcy/lUpvAIzHjIJt/OeLWU=' ${useTestResolver ? '' : `http://${remoteAuthority}`};`,  // the sha is the same as in src/vs/workbench/services/extensions/worker/webWorkerExtensionHostIframe.html
 			'child-src \'self\';',
-			`frame-src 'self' https://*.vscode-webview.net data:;`,
-			'worker-src \'self\' data:;',
+			`frame-src 'self' https://*.vscode-cdn.net data:;`,
+			'worker-src \'self\' data: blob:;',
 			'style-src \'self\' \'unsafe-inline\';',
 			'connect-src \'self\' ws: wss: https:;',
 			'font-src \'self\' blob:;',
@@ -331,7 +421,7 @@ export class WebClientServer {
 		}
 
 		res.writeHead(200, headers);
-		return res.end(data);
+		return void res.end(data);
 	}
 
 	private _getScriptCspHashes(content: string): string[] {
@@ -357,8 +447,8 @@ export class WebClientServer {
 	 * Handle HTTP requests for /callback
 	 */
 	private async _handleCallback(res: http.ServerResponse): Promise<void> {
-		const filePath = FileAccess.asFileUri('vs/code/browser/workbench/callback.html', require).fsPath;
-		const data = (await util.promisify(fs.readFile)(filePath)).toString();
+		const filePath = FileAccess.asFileUri('vs/code/browser/workbench/callback.html').fsPath;
+		const data = (await promises.readFile(filePath)).toString();
 		const cspDirectives = [
 			'default-src \'self\';',
 			'img-src \'self\' https: data: blob:;',
@@ -372,6 +462,6 @@ export class WebClientServer {
 			'Content-Type': 'text/html',
 			'Content-Security-Policy': cspDirectives
 		});
-		return res.end(data);
+		return void res.end(data);
 	}
 }
