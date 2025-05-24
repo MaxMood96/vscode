@@ -5,14 +5,15 @@
 
 import { revive } from '../../../../base/common/marshalling.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
-import { IOffsetRange, OffsetRange } from '../../../../editor/common/core/offsetRange.js';
+import { IOffsetRange, OffsetRange } from '../../../../editor/common/core/ranges/offsetRange.js';
 import { IRange } from '../../../../editor/common/core/range.js';
 import { IChatAgentCommand, IChatAgentData, IChatAgentService, reviveSerializedAgent } from './chatAgents.js';
-import { IChatRequestVariableEntry, IDiagnosticVariableEntryFilterData } from './chatModel.js';
+import { IChatRequestToolSetEntry, IChatRequestVariableEntry, IDiagnosticVariableEntryFilterData } from './chatModel.js';
 import { IChatSlashData } from './chatSlashCommands.js';
 import { IChatRequestProblemsVariable, IChatRequestVariableValue } from './chatVariables.js';
 import { ChatAgentLocation } from './constants.js';
 import { IToolData } from './languageModelToolsService.js';
+import { IChatPromptSlashCommand } from './promptSyntax/service/types.js';
 
 // These are in a separate file to avoid circular dependencies with the dependencies of the parser
 
@@ -93,6 +94,27 @@ export class ChatRequestToolPart implements IParsedChatRequestPart {
 }
 
 /**
+ * An invocation of a tool
+ */
+export class ChatRequestToolSetPart implements IParsedChatRequestPart {
+	static readonly Kind = 'toolset';
+	readonly kind = ChatRequestToolSetPart.Kind;
+	constructor(readonly range: OffsetRange, readonly editorRange: IRange, readonly id: string, readonly name: string, readonly icon: ThemeIcon) { }
+
+	get text(): string {
+		return `${chatVariableLeader}${this.name}`;
+	}
+
+	get promptText(): string {
+		return this.text;
+	}
+
+	toVariableEntry(): IChatRequestToolSetEntry {
+		return { kind: 'toolset', id: this.id, name: this.name, range: this.range, icon: this.icon, value: undefined };
+	}
+}
+
+/**
  * An invocation of an agent that can be resolved by the agent service
  */
 export class ChatRequestAgentPart implements IParsedChatRequestPart {
@@ -101,6 +123,7 @@ export class ChatRequestAgentPart implements IParsedChatRequestPart {
 	constructor(readonly range: OffsetRange, readonly editorRange: IRange, readonly agent: IChatAgentData) { }
 
 	get text(): string {
+
 		return `${chatAgentLeader}${this.agent.name}`;
 	}
 
@@ -140,6 +163,23 @@ export class ChatRequestSlashCommandPart implements IParsedChatRequestPart {
 
 	get promptText(): string {
 		return `${chatSubcommandLeader}${this.slashCommand.command}`;
+	}
+}
+
+/**
+ * An invocation of a standalone slash command
+ */
+export class ChatRequestSlashPromptPart implements IParsedChatRequestPart {
+	static readonly Kind = 'prompt';
+	readonly kind = ChatRequestSlashPromptPart.Kind;
+	constructor(readonly range: OffsetRange, readonly editorRange: IRange, readonly slashPromptCommand: IChatPromptSlashCommand) { }
+
+	get text(): string {
+		return `${chatSubcommandLeader}${this.slashPromptCommand.command}`;
+	}
+
+	get promptText(): string {
+		return `${chatSubcommandLeader}${this.slashPromptCommand.command}`;
 	}
 }
 
@@ -195,6 +235,14 @@ export function reviveParsedChatRequest(serialized: IParsedChatRequest): IParsed
 					(part as ChatRequestToolPart).displayName,
 					(part as ChatRequestToolPart).icon,
 				);
+			} else if (part.kind === ChatRequestToolSetPart.Kind) {
+				return new ChatRequestToolSetPart(
+					new OffsetRange(part.range.start, part.range.endExclusive),
+					part.editorRange,
+					(part as ChatRequestToolSetPart).id,
+					(part as ChatRequestToolSetPart).name,
+					(part as ChatRequestToolSetPart).icon,
+				);
 			} else if (part.kind === ChatRequestAgentPart.Kind) {
 				let agent = (part as ChatRequestAgentPart).agent;
 				agent = reviveSerializedAgent(agent);
@@ -215,6 +263,12 @@ export function reviveParsedChatRequest(serialized: IParsedChatRequest): IParsed
 					new OffsetRange(part.range.start, part.range.endExclusive),
 					part.editorRange,
 					(part as ChatRequestSlashCommandPart).slashCommand
+				);
+			} else if (part.kind === ChatRequestSlashPromptPart.Kind) {
+				return new ChatRequestSlashPromptPart(
+					new OffsetRange(part.range.start, part.range.endExclusive),
+					part.editorRange,
+					(part as ChatRequestSlashPromptPart).slashPromptCommand
 				);
 			} else if (part.kind === ChatRequestDynamicVariablePart.Kind) {
 				return new ChatRequestDynamicVariablePart(
