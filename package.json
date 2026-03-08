@@ -170,7 +170,7 @@
     "asar": "^3.0.3",
     "chromium-pickle-js": "^0.2.0",
     "cookie": "^0.7.2",
-    "copy-webpack-plugin": "^11.0.0",
+    "copy-webpack-plugin": "^14.0.0",
     "css-loader": "^6.9.1",
     "debounce": "^1.0.0",
     "deemon": "^1.13.6",
